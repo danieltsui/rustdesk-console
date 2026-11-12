@@ -1,0 +1,782 @@
+//! Route table, ports of `http/router/{api,admin,router}.go`.
+
+use axum::extract::DefaultBodyLimit;
+use axum::http::{header, HeaderValue};
+use axum::routing::{delete, get, patch, post, put};
+use axum::Router;
+use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::ServeDir;
+use tower_http::trace::TraceLayer;
+use tower_http::set_header::SetResponseHeaderLayer;
+
+use crate::http::{admin, api, file, my, oauth, observability, pro_api, static_files, switch_grant};
+use crate::state::AppState;
+
+pub fn build(state: AppState) -> Router {
+    let web_client_enabled = state.config.app.web_client == 1;
+
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
+    let mut app = Router::new()
+        .merge(crate::features::routes())
+        .merge(crate::http::developer::routes())
+        // web index + config
+        .route("/", get(static_files::index))
+        .route("/health", get(observability::health))
+        .route("/metrics", get(observability::metrics))
+        // ---- client API (/api) ----
+        .route("/api/", get(api::index))
+        .route("/api/version", get(api::version))
+        .route("/api/heartbeat", post(api::heartbeat))
+        .route(
+            "/api/switch-grant",
+            post(switch_grant::register).layer(DefaultBodyLimit::max(1024)),
+        )
+        .route("/api/login-options", get(api::login_options))
+        .route("/api/login", post(api::login))
+        .route("/api/logout", post(api::logout))
+        .route("/api/currentUser", post(api::user_info))
+        .route("/api/user/info", get(api::user_info))
+        .route("/api/sysinfo", post(api::sysinfo))
+        .route("/api/sysinfo_ver", post(api::sysinfo_ver))
+        .route(
+            "/api/users",
+            get(api::group_users).post(pro_api::user_create),
+        )
+        .route("/api/users/invite", post(pro_api::user_invite))
+        .route(
+            "/api/users/tfa/totp/enforce",
+            put(pro_api::user_tfa_enforce),
+        )
+        .route(
+            "/api/users/disable_login_verification",
+            put(pro_api::user_disable_login_verification),
+        )
+        .route("/api/users/force-logout", post(pro_api::user_force_logout))
+        .route("/api/users/:guid/disable", post(pro_api::user_disable))
+        .route("/api/users/:guid/enable", post(pro_api::user_enable))
+        .route("/api/users/:guid", delete(pro_api::user_delete))
+        .route("/api/peers", get(api::group_peers))
+        .route("/api/devices", get(pro_api::devices))
+        .route("/api/devices/:guid/disable", post(pro_api::device_disable))
+        .route("/api/devices/:guid/enable", post(pro_api::device_enable))
+        .route("/api/devices/:guid", delete(pro_api::device_delete))
+        .route("/api/devices/:guid/assign", post(pro_api::device_assign))
+        .route(
+            "/api/device-groups",
+            get(pro_api::device_groups).post(pro_api::device_group_create),
+        )
+        .route(
+            "/api/device-groups/:guid",
+            patch(pro_api::device_group_update)
+                .delete(pro_api::device_group_delete)
+                .post(pro_api::device_group_add_devices),
+        )
+        .route(
+            "/api/device-groups/:guid/devices",
+            delete(pro_api::device_group_remove_devices),
+        )
+        .route("/api/strategies", get(pro_api::strategies))
+        .route("/api/strategies/:guid", get(pro_api::strategy_detail))
+        .route(
+            "/api/strategies/:guid/status",
+            put(pro_api::strategy_status),
+        )
+        .route("/api/strategies/assign", post(pro_api::strategy_assign))
+        .route(
+            "/api/user-groups",
+            get(pro_api::user_groups).post(pro_api::user_group_create),
+        )
+        .route(
+            "/api/user-groups/:guid",
+            patch(pro_api::user_group_update)
+                .delete(pro_api::user_group_delete)
+                .post(pro_api::user_group_add_users),
+        )
+        .route("/api/audits/conn", get(pro_api::audits_conn))
+        .route("/api/audits/file", get(pro_api::audits_file))
+        .route("/api/audits/alarm", get(pro_api::audits_alarm))
+        .route("/api/audits/console", get(pro_api::audits_empty))
+        .route(
+            "/api/device-group/accessible",
+            get(api::device_group_accessible),
+        )
+        .route("/api/audit/conn", post(api::audit_conn))
+        .route("/api/audit/conn/active", get(api::audit_conn_active))
+        .route("/api/audit/file", post(api::audit_file))
+        .route("/api/audit/alarm", post(api::audit_alarm))
+        .route("/api/audit", put(api::audit_update))
+        .route("/api/devices/deploy", post(api::device_deploy))
+        .route("/api/devices/cli", post(api::device_cli))
+        .route(
+            "/api/record",
+            post(api::record).layer(DefaultBodyLimit::max(64 * 1024 * 1024)),
+        )
+        // oauth / oidc login
+        .route("/api/oidc/auth", post(oauth::oidc_auth))
+        .route("/api/oidc/auth-query", get(oauth::oidc_auth_query))
+        .route("/api/oidc/callback", get(oauth::oauth_callback))
+        .route("/api/oidc/login", get(oauth::oauth_callback))
+        .route("/api/oidc/msg", get(oauth::message))
+        .route("/api/oauth/callback", get(oauth::oauth_callback))
+        .route("/api/oauth/login", get(oauth::oauth_callback))
+        .route("/api/oauth/msg", get(oauth::message))
+        // address book (legacy)
+        .route("/api/ab", get(api::ab_get).post(api::ab_update))
+        .route("/api/ab/get", post(api::ab_get))
+        // address book (personal)
+        .route(
+            "/api/ab/personal",
+            get(api::ab_personal).post(api::ab_personal),
+        )
+        .route(
+            "/api/ab/settings",
+            get(api::ab_settings).post(api::ab_settings),
+        )
+        .route(
+            "/api/ab/shared/profiles",
+            get(api::ab_shared_profiles).post(api::ab_shared_profiles),
+        )
+        .route("/api/ab/shared/add", post(api::ab_shared_add))
+        .route(
+            "/api/ab/shared/update/profile",
+            put(api::ab_shared_update_profile),
+        )
+        .route("/api/ab/shared", delete(api::ab_shared_delete))
+        .route("/api/ab/peers", get(api::ab_peers).post(api::ab_peers))
+        .route("/api/ab/tags/:guid", get(api::ab_tags).post(api::ab_tags))
+        .route("/api/ab/peer/add/:guid", post(api::ab_peer_add))
+        .route("/api/ab/peer/:guid", delete(api::ab_peer_del))
+        .route("/api/ab/peer/update/:guid", put(api::ab_peer_update))
+        .route("/api/ab/tag/add/:guid", post(api::ab_tag_add))
+        .route("/api/ab/tag/rename/:guid", put(api::ab_tag_rename))
+        .route("/api/ab/tag/update/:guid", put(api::ab_tag_update))
+        .route("/api/ab/tag/:guid", delete(api::ab_tag_del))
+        .route(
+            "/api/ab/rules",
+            get(api::ab_rules).delete(api::ab_rules_delete),
+        )
+        .route(
+            "/api/ab/rule",
+            post(api::ab_rule_add).patch(api::ab_rule_update),
+        );
+
+    if web_client_enabled {
+        app = app
+            .route("/api/shared-peer", post(api::shared_peer))
+            .route("/api/server-config", post(api::server_config))
+            .route("/api/server-config-v2", post(api::server_config_v2))
+            .route("/webclient-config/index.js", get(static_files::config_js))
+            .route("/webclient", get(static_files::webclient_v1_index))
+            .route("/webclient/", get(static_files::webclient_v1_index))
+            .route("/webclient/*path", get(static_files::webclient_v1_path))
+            .route("/webclient2", get(static_files::webclient_v2_index))
+            .route("/webclient2/", get(static_files::webclient_v2_index))
+            .route("/webclient2/*path", get(static_files::webclient_v2_path));
+    }
+
+    app = app.merge(admin_routes());
+
+    // admin SPA (single-binary frontend)
+    app = app
+        .route("/_admin", get(static_files::admin_index))
+        .route("/_admin/", get(static_files::admin_index))
+        .route("/_admin/*path", get(static_files::admin_path));
+
+    // user-uploaded files (written to disk under resources/public/upload)
+    let upload_dir = {
+        let base = if state.config.gin.resources_path.is_empty() {
+            "resources".to_string()
+        } else {
+            state.config.gin.resources_path.clone()
+        };
+        format!("{base}/public/upload")
+    };
+    app = app.nest_service(
+        "/upload",
+        tower::ServiceBuilder::new()
+            .layer(SetResponseHeaderLayer::overriding(
+                header::CONTENT_SECURITY_POLICY,
+                HeaderValue::from_static("sandbox; default-src 'none'"),
+            ))
+            .layer(SetResponseHeaderLayer::overriding(
+                header::X_CONTENT_TYPE_OPTIONS,
+                HeaderValue::from_static("nosniff"),
+            ))
+            .service(ServeDir::new(upload_dir)),
+    );
+
+    app.layer(cors)
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
+}
+
+fn admin_routes() -> Router<AppState> {
+    Router::new()
+        // auth (public)
+        .route("/api/admin/login", post(admin::login))
+        .route("/api/admin/captcha", get(admin::captcha))
+        .route("/api/admin/logout", post(admin::logout))
+        .route("/api/admin/login-options", get(admin::login_options))
+        .route(
+            "/api/admin/password-reset/request",
+            post(admin::password_reset_request),
+        )
+        .route(
+            "/api/admin/password-reset/confirm",
+            post(admin::password_reset_confirm),
+        )
+        .route("/api/admin/setup/status", get(admin::setup_status))
+        .route("/api/admin/setup/initialize", post(admin::setup_initialize))
+        .route("/api/admin/oidc/auth", post(oauth::admin_oidc_auth))
+        .route(
+            "/api/admin/oidc/auth-query",
+            get(oauth::admin_oidc_auth_query),
+        )
+        .route("/api/admin/user/register", post(admin::user_register))
+        // overview / diagnostics
+        .route("/api/admin/overview", get(admin::overview))
+        .route("/api/admin/diagnostics/run", post(admin::diagnostics_run))
+        // config
+        .route(
+            "/api/admin/config/admin",
+            get(admin::config_admin).patch(admin::config_admin_update),
+        )
+        .route(
+            "/api/admin/config/admin/manage",
+            get(admin::config_admin_manage).patch(admin::config_admin_update),
+        )
+        .route(
+            "/api/admin/config/login-security",
+            get(admin::login_security_config).patch(admin::login_security_config_update),
+        )
+        .route(
+            "/api/admin/config/login-security/test-email",
+            post(admin::login_security_test_email),
+        )
+        .route(
+            "/api/admin/config/smtp",
+            get(admin::smtp_email_configs).post(admin::smtp_email_config_save),
+        )
+        .route(
+            "/api/admin/config/smtp/enable",
+            post(admin::smtp_email_config_enable),
+        )
+        .route(
+            "/api/admin/config/smtp/delete",
+            post(admin::smtp_email_config_delete),
+        )
+        .route(
+            "/api/admin/config/smtp/test",
+            post(admin::smtp_email_config_test),
+        )
+        .route(
+            "/api/admin/config/server",
+            get(admin::config_server).patch(admin::config_server_update),
+        )
+        .route(
+            "/api/admin/config/deployment",
+            get(admin::config_deployment).post(admin::config_deployment_preview),
+        )
+        .route(
+            "/api/admin/config/webclient-capabilities",
+            get(admin::config_webclient_capabilities),
+        )
+        .route(
+            "/api/admin/config/record-storage",
+            get(admin::config_record_storage).patch(admin::config_record_storage_update),
+        )
+        .route("/api/admin/config/app", get(admin::config_app))
+        // user
+        .route("/api/admin/user/current", get(admin::user_current))
+        .route(
+            "/api/admin/user/myAvatar",
+            post(admin::user_update_my_avatar),
+        )
+        .route("/api/admin/user/mySecurity", get(admin::my_security))
+        .route("/api/admin/user/myTfaSetup", post(admin::my_tfa_setup))
+        .route("/api/admin/user/myTfaEnable", post(admin::my_tfa_enable))
+        .route("/api/admin/user/myTfaDisable", post(admin::my_tfa_disable))
+        .route(
+            "/api/admin/user/myTrustedLoginDevices",
+            get(admin::my_trusted_login_devices),
+        )
+        .route(
+            "/api/admin/user/myTrustedLoginDevice/delete",
+            post(admin::my_trusted_login_device_delete),
+        )
+        .route(
+            "/api/admin/user/changeCurPwd",
+            post(admin::user_change_cur_pwd),
+        )
+        .route("/api/admin/user/myOauth", post(admin::user_my_oauth_real))
+        .route("/api/admin/user/groupUsers", post(admin::user_group_users))
+        .route("/api/admin/user/list", get(admin::user_list))
+        .route("/api/admin/user/detail/:id", get(admin::user_detail))
+        .route("/api/admin/user/create", post(admin::user_create))
+        .route("/api/admin/user/update", post(admin::user_update))
+        .route("/api/admin/user/delete", post(admin::user_delete))
+        .route("/api/admin/user/changePwd", post(admin::user_change_pwd))
+        .route(
+            "/api/admin/user/security",
+            post(admin::user_security_update),
+        )
+        .route("/api/admin/user/tfa/reset", post(admin::user_tfa_reset))
+        .route(
+            "/api/admin/user/trusted-login-devices",
+            get(admin::user_trusted_login_devices),
+        )
+        .route(
+            "/api/admin/user/trusted-login-device/delete",
+            post(admin::user_trusted_login_device_delete),
+        )
+        // messages
+        .route("/api/admin/message/list", get(admin::message_list))
+        .route("/api/admin/message/create", post(admin::message_create))
+        .route("/api/admin/message/status", post(admin::message_status))
+        .route("/api/admin/message/delete", post(admin::message_delete))
+        .route(
+            "/api/admin/webhook/subscriptions",
+            get(admin::webhook_subscription_list).post(admin::webhook_subscription_save),
+        )
+        .route(
+            "/api/admin/webhook/subscription/delete",
+            post(admin::webhook_subscription_delete),
+        )
+        .route(
+            "/api/admin/webhook/subscription/test",
+            post(admin::webhook_subscription_test),
+        )
+        .route(
+            "/api/admin/webhook/deliveries",
+            get(admin::webhook_delivery_list),
+        )
+        // group
+        .route("/api/admin/group/list", get(admin::group_list))
+        .route("/api/admin/group/detail/:id", get(admin::group_detail))
+        .route("/api/admin/group/create", post(admin::group_create))
+        .route("/api/admin/group/update", post(admin::group_update))
+        .route("/api/admin/group/delete", post(admin::group_delete))
+        // device group
+        .route(
+            "/api/admin/device_group/list",
+            get(admin::device_group_list),
+        )
+        .route(
+            "/api/admin/device_group/detail/:id",
+            get(admin::device_group_detail),
+        )
+        .route(
+            "/api/admin/device_group/create",
+            post(admin::device_group_create),
+        )
+        .route(
+            "/api/admin/device_group/update",
+            post(admin::device_group_update),
+        )
+        .route(
+            "/api/admin/device_group/delete",
+            post(admin::device_group_delete),
+        )
+        // deployment tokens
+        .route(
+            "/api/admin/deployment_token/list",
+            get(admin::deployment_token_list),
+        )
+        .route(
+            "/api/admin/deployment_token/detail/:id",
+            get(admin::deployment_token_detail),
+        )
+        .route(
+            "/api/admin/deployment_token/create",
+            post(admin::deployment_token_create),
+        )
+        .route(
+            "/api/admin/deployment_token/delete",
+            post(admin::deployment_token_delete),
+        )
+        .route(
+            "/api/admin/deployment_token/revoke",
+            post(admin::deployment_token_revoke),
+        )
+        // strategy
+        .route("/api/admin/strategy/list", get(admin::strategy_list))
+        .route(
+            "/api/admin/strategy/detail/:id",
+            get(admin::strategy_detail),
+        )
+        .route("/api/admin/strategy/create", post(admin::strategy_create))
+        .route("/api/admin/strategy/update", post(admin::strategy_update))
+        .route("/api/admin/strategy/delete", post(admin::strategy_delete))
+        .route("/api/admin/strategy/assign", post(admin::strategy_assign))
+        .route(
+            "/api/admin/strategy_assignment/list",
+            get(admin::strategy_assignment_list),
+        )
+        .route(
+            "/api/admin/strategy_assignment/detail/:id",
+            get(admin::strategy_assignment_detail),
+        )
+        .route(
+            "/api/admin/strategy_assignment/create",
+            post(admin::strategy_assignment_create),
+        )
+        .route(
+            "/api/admin/strategy_assignment/update",
+            post(admin::strategy_assignment_update),
+        )
+        .route(
+            "/api/admin/strategy_assignment/delete",
+            post(admin::strategy_assignment_delete),
+        )
+        // tag
+        .route("/api/admin/tag/list", get(admin::tag_list))
+        .route("/api/admin/tag/detail/:id", get(admin::tag_detail))
+        .route("/api/admin/tag/create", post(admin::tag_create))
+        .route("/api/admin/tag/update", post(admin::tag_update))
+        .route("/api/admin/tag/delete", post(admin::tag_delete))
+        // peer
+        .route("/api/admin/peer/simpleData", post(admin::peer_simple_data))
+        .route("/api/admin/peer/list", get(admin::peer_list))
+        .route("/api/admin/peer/detail/:id", get(admin::peer_detail))
+        .route("/api/admin/peer/create", post(admin::peer_create))
+        .route("/api/admin/peer/update", post(admin::peer_update))
+        .route("/api/admin/peer/delete", post(admin::peer_delete))
+        .route(
+            "/api/admin/peer/batchDelete",
+            post(admin::peer_batch_delete),
+        )
+        .route("/api/admin/peer/disconnect", post(admin::peer_disconnect))
+        .route(
+            "/api/admin/peer/sysinfo-refresh",
+            post(admin::peer_request_sysinfo_refresh),
+        )
+        .route(
+            "/api/admin/peer/trusted-devices/enable",
+            post(admin::peer_enable_trusted_devices),
+        )
+        .route(
+            "/api/admin/active_connection/list",
+            get(admin::active_connection_list),
+        )
+        // login log
+        .route("/api/admin/login_log/list", get(admin::login_log_list))
+        .route("/api/admin/login_log/delete", post(admin::login_log_delete))
+        .route(
+            "/api/admin/login_log/batchDelete",
+            post(admin::login_log_batch_delete),
+        )
+        // oauth providers
+        .route("/api/admin/oauth/list", get(admin::oauth_list))
+        .route("/api/admin/oauth/detail/:id", get(admin::oauth_detail))
+        .route("/api/admin/oauth/create", post(admin::oauth_create))
+        .route("/api/admin/oauth/update", post(admin::oauth_update))
+        .route("/api/admin/oauth/delete", post(admin::oauth_delete))
+        .route("/api/admin/oauth/test", post(admin::oauth_test))
+        .route("/api/admin/oauth/unbind", post(admin::oauth_unbind))
+        .route("/api/admin/oauth/confirm", post(oauth::admin_confirm))
+        .route("/api/admin/oauth/bind", post(oauth::admin_to_bind))
+        .route(
+            "/api/admin/oauth/bindConfirm",
+            post(oauth::admin_bind_confirm),
+        )
+        .route("/api/admin/oauth/info", get(oauth::admin_info))
+        // audit
+        .route("/api/admin/audit_conn/list", get(admin::audit_conn_list))
+        .route(
+            "/api/admin/audit_conn/delete",
+            post(admin::audit_conn_delete),
+        )
+        .route(
+            "/api/admin/audit_conn/batchDelete",
+            post(admin::audit_conn_batch_delete),
+        )
+        .route("/api/admin/audit_file/list", get(admin::audit_file_list))
+        .route(
+            "/api/admin/audit_file/delete",
+            post(admin::audit_file_delete),
+        )
+        .route(
+            "/api/admin/audit_file/batchDelete",
+            post(admin::audit_file_batch_delete),
+        )
+        .route("/api/admin/record_file/list", get(admin::record_file_list))
+        .route(
+            "/api/admin/record_file/delete",
+            post(admin::record_file_delete),
+        )
+        .route(
+            "/api/admin/record_file/download/:id",
+            get(admin::record_file_download),
+        )
+        // share records
+        .route(
+            "/api/admin/share_record/list",
+            get(admin::share_record_list),
+        )
+        .route(
+            "/api/admin/share_record/delete",
+            post(admin::share_record_delete),
+        )
+        .route(
+            "/api/admin/share_record/batchDelete",
+            post(admin::share_record_batch_delete),
+        )
+        // user tokens
+        .route("/api/admin/user_token/list", get(admin::user_token_list))
+        .route(
+            "/api/admin/user_token/delete",
+            post(admin::user_token_delete),
+        )
+        .route(
+            "/api/admin/user_token/batchDelete",
+            post(admin::user_token_batch_delete),
+        )
+        // address book
+        .route(
+            "/api/admin/address_book/list",
+            get(admin::address_book_list),
+        )
+        .route(
+            "/api/admin/address_book/detail/:id",
+            get(admin::address_book_detail),
+        )
+        .route(
+            "/api/admin/address_book/create",
+            post(admin::address_book_create),
+        )
+        .route(
+            "/api/admin/address_book/update",
+            post(admin::address_book_update),
+        )
+        .route(
+            "/api/admin/address_book/delete",
+            post(admin::address_book_delete),
+        )
+        .route(
+            "/api/admin/address_book/batchCreate",
+            post(admin::address_book_batch_create),
+        )
+        .route(
+            "/api/admin/address_book/batchCreateFromPeers",
+            post(admin::address_book_batch_create_from_peers),
+        )
+        .route(
+            "/api/admin/address_book/shareByWebClient",
+            post(admin::address_book_share),
+        )
+        // address book collections
+        .route(
+            "/api/admin/address_book_collection/list",
+            get(admin::collection_list),
+        )
+        .route(
+            "/api/admin/address_book_collection/detail/:id",
+            get(admin::collection_detail),
+        )
+        .route(
+            "/api/admin/address_book_collection/create",
+            post(admin::collection_create),
+        )
+        .route(
+            "/api/admin/address_book_collection/update",
+            post(admin::collection_update),
+        )
+        .route(
+            "/api/admin/address_book_collection/delete",
+            post(admin::collection_delete),
+        )
+        // address book collection rules
+        .route(
+            "/api/admin/address_book_collection_rule/list",
+            get(admin::rule_list),
+        )
+        .route(
+            "/api/admin/address_book_collection_rule/detail/:id",
+            get(admin::rule_detail),
+        )
+        .route(
+            "/api/admin/address_book_collection_rule/create",
+            post(admin::rule_create),
+        )
+        .route(
+            "/api/admin/address_book_collection_rule/update",
+            post(admin::rule_update),
+        )
+        .route(
+            "/api/admin/address_book_collection_rule/delete",
+            post(admin::rule_delete),
+        )
+        // rustdesk server commands
+        .route("/api/admin/rustdesk/status", get(admin::rustdesk_status))
+        .route(
+            "/api/admin/rustdesk/relayPool",
+            get(admin::rustdesk_relay_pool),
+        )
+        .route(
+            "/api/admin/rustdesk/relayServers",
+            patch(admin::rustdesk_update_relay_servers),
+        )
+        .route(
+            "/api/admin/rustdesk/relayServers/check",
+            post(admin::rustdesk_check_relay_pool),
+        )
+        .route(
+            "/api/admin/rustdesk/alwaysUseRelay",
+            patch(admin::rustdesk_update_always_use_relay),
+        )
+        .route(
+            "/api/admin/rustdesk/ipBlocker",
+            get(admin::rustdesk_ip_blocker),
+        )
+        .route("/api/admin/rustdesk/cmdList", get(admin::rustdesk_cmd_list))
+        .route(
+            "/api/admin/rustdesk/cmdCreate",
+            post(admin::rustdesk_cmd_create),
+        )
+        .route(
+            "/api/admin/rustdesk/cmdUpdate",
+            post(admin::rustdesk_cmd_update),
+        )
+        .route(
+            "/api/admin/rustdesk/cmdDelete",
+            post(admin::rustdesk_cmd_delete),
+        )
+        .route(
+            "/api/admin/rustdesk/sendCmd",
+            post(admin::rustdesk_send_cmd),
+        )
+        .route(
+            "/api/admin/rustdesk/geo",
+            get(admin::rustdesk_geo_overview),
+        )
+        .route(
+            "/api/admin/rustdesk/geo/settings",
+            put(admin::rustdesk_geo_save_settings),
+        )
+        .route(
+            "/api/admin/rustdesk/geo/databases/:kind/download",
+            post(admin::rustdesk_geo_download_database),
+        )
+        .route(
+            "/api/admin/rustdesk/geo/databases/:kind/restore",
+            post(admin::rustdesk_geo_restore_database),
+        )
+        .route(
+            "/api/admin/rustdesk/geo/databases/update-policy",
+            put(admin::rustdesk_geo_save_update_policy),
+        )
+        .route(
+            "/api/admin/rustdesk/geo/reload",
+            post(admin::rustdesk_geo_reload),
+        )
+        .route(
+            "/api/admin/rustdesk/geo/test",
+            post(admin::rustdesk_geo_test),
+        )
+        // file upload (local + OSS)
+        .route("/api/admin/file/upload", post(file::upload))
+        .route("/api/admin/file/oss_token", get(file::oss_token))
+        .route("/api/admin/file/notify", post(file::notify))
+        // my/*
+        .route(
+            "/api/admin/my/share_record/list",
+            get(my::share_record_list),
+        )
+        .route(
+            "/api/admin/my/share_record/delete",
+            post(my::share_record_delete),
+        )
+        .route(
+            "/api/admin/my/share_record/batchDelete",
+            post(my::share_record_batch_delete),
+        )
+        .route(
+            "/api/admin/my/address_book/list",
+            get(my::address_book_list),
+        )
+        .route(
+            "/api/admin/my/address_book/create",
+            post(my::address_book_create),
+        )
+        .route(
+            "/api/admin/my/address_book/update",
+            post(my::address_book_update),
+        )
+        .route(
+            "/api/admin/my/address_book/delete",
+            post(my::address_book_delete),
+        )
+        .route(
+            "/api/admin/my/address_book/batchCreateFromPeers",
+            post(my::address_book_batch_create_from_peers),
+        )
+        .route(
+            "/api/admin/my/address_book/batchUpdateTags",
+            post(my::address_book_batch_update_tags),
+        )
+        .route("/api/admin/my/tag/list", get(my::tag_list))
+        .route("/api/admin/my/tag/create", post(my::tag_create))
+        .route("/api/admin/my/tag/update", post(my::tag_update))
+        .route("/api/admin/my/tag/delete", post(my::tag_delete))
+        .route(
+            "/api/admin/my/address_book_collection/list",
+            get(my::collection_list),
+        )
+        .route(
+            "/api/admin/my/address_book_collection/create",
+            post(my::collection_create),
+        )
+        .route(
+            "/api/admin/my/address_book_collection/update",
+            post(my::collection_update),
+        )
+        .route(
+            "/api/admin/my/address_book_collection/delete",
+            post(my::collection_delete),
+        )
+        .route(
+            "/api/admin/my/address_book_collection_rule/list",
+            get(my::rule_list),
+        )
+        .route(
+            "/api/admin/my/address_book_collection_rule/create",
+            post(my::rule_create),
+        )
+        .route(
+            "/api/admin/my/address_book_collection_rule/update",
+            post(my::rule_update),
+        )
+        .route(
+            "/api/admin/my/address_book_collection_rule/delete",
+            post(my::rule_delete),
+        )
+        .route("/api/admin/my/peer/list", get(my::peer_list))
+        .route(
+            "/api/admin/my/peer/sysinfo-refresh",
+            post(my::peer_request_sysinfo_refresh),
+        )
+        .route(
+            "/api/admin/my/peer/trusted-devices/enable",
+            post(my::peer_enable_trusted_devices),
+        )
+        .route("/api/admin/my/message/list", get(my::message_list))
+        .route("/api/admin/my/message/latest", get(my::message_latest))
+        .route(
+            "/api/admin/my/message/unread",
+            get(my::message_unread_count),
+        )
+        .route("/api/admin/my/message/create", post(my::message_create))
+        .route("/api/admin/my/message/read", post(my::message_read))
+        .route("/api/admin/my/message/delete", post(my::message_delete))
+        .route("/api/admin/my/message/users", get(my::message_users))
+        .route("/api/admin/my/login_log/list", get(my::login_log_list))
+        .route("/api/admin/my/login_log/delete", post(my::login_log_delete))
+        .route(
+            "/api/admin/my/login_log/batchDelete",
+            post(my::login_log_batch_delete),
+        )
+}

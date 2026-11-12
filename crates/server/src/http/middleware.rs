@@ -1,0 +1,368 @@
+//! Auth extractors + request helpers, mirroring `http/middleware/*.go`.
+//!
+//! - [`RustClientUser`]: `Authorization: Bearer <token>` (RustDesk PC client).
+//! - [`BackendUser`]: `api-token` header (admin panel); auto-refreshes the token.
+//! - [`AdminUser`]: [`BackendUser`] + `is_admin` check.
+//! - [`ClientIp`] / [`AcceptLang`]: request metadata helpers.
+
+use std::net::SocketAddr;
+
+use async_trait::async_trait;
+use axum::extract::{ConnectInfo, FromRequestParts};
+use axum::http::request::Parts;
+use axum::response::Response;
+
+use entity::{deployment_token, user, user_token};
+
+use crate::http::response;
+use crate::state::AppState;
+
+/// `Accept-Language` header value (empty string when absent).
+pub struct AcceptLang(pub String);
+
+#[async_trait]
+impl<S: Send + Sync> FromRequestParts<S> for AcceptLang {
+    type Rejection = std::convert::Infallible;
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        let lang = parts
+            .headers
+            .get("Accept-Language")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        Ok(AcceptLang(lang))
+    }
+}
+
+/// Best-effort client IP: `X-Forwarded-For` (first hop), `X-Real-IP`, else the
+/// peer socket address.
+pub struct ClientIp(pub String);
+
+#[async_trait]
+impl FromRequestParts<AppState> for ClientIp {
+    type Rejection = std::convert::Infallible;
+    async fn from_request_parts(
+        parts: &mut Parts,
+        _state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(ClientIp(extract_client_ip(parts)))
+    }
+}
+
+pub fn extract_client_ip(parts: &Parts) -> String {
+    if let Some(xff) = parts
+        .headers
+        .get("X-Forwarded-For")
+        .and_then(|v| v.to_str().ok())
+    {
+        if let Some(first) = xff.split(',').next() {
+            let ip = first.trim();
+            if !ip.is_empty() {
+                return ip.to_string();
+            }
+        }
+    }
+    if let Some(xrip) = parts.headers.get("X-Real-IP").and_then(|v| v.to_str().ok()) {
+        if !xrip.is_empty() {
+            return xrip.to_string();
+        }
+    }
+    parts
+        .extensions
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ci| ci.0.ip().to_string())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn header(parts: &Parts, name: &str) -> Option<String> {
+    parts
+        .headers
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+}
+
+/// RustDesk deployment CLI auth: accepts a normal user token or a deployment
+/// token created by the admin console.
+pub struct DeploymentAuth {
+    pub user: Option<user::Model>,
+    pub token: String,
+    pub deployment_token: Option<deployment_token::Model>,
+}
+
+impl DeploymentAuth {
+    pub fn is_deployment_token(&self) -> bool {
+        self.deployment_token.is_some()
+    }
+
+    pub fn deployment_token_id(&self) -> i32 {
+        self.deployment_token.as_ref().map(|t| t.id).unwrap_or(0)
+    }
+
+    pub fn has_scope(&self, scope: &str) -> bool {
+        match &self.deployment_token {
+            Some(token) => crate::services::deployment::has_scope(token, scope),
+            None => true,
+        }
+    }
+}
+
+#[async_trait]
+impl FromRequestParts<AppState> for DeploymentAuth {
+    type Rejection = Response;
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let auth = header(parts, "Authorization").ok_or_else(response::unauthorized)?;
+        if auth.len() <= 7 {
+            return Err(response::unauthorized());
+        }
+        let token = auth[7..].to_string();
+        if let Ok(Some((user, _ut))) =
+            crate::services::user::info_by_access_token(&state.db, &token).await
+        {
+            if user.must_change_password {
+                let lang = header(parts, "Accept-Language").unwrap_or_default();
+                return Err(response::error(state.tr(&lang, "PasswordChangeRequired")));
+            }
+            return Ok(DeploymentAuth {
+                user: Some(user),
+                token,
+                deployment_token: None,
+            });
+        }
+        match crate::services::deployment::verify_token(&state.db, &token).await {
+            Ok(Some(deployment_token)) => Ok(DeploymentAuth {
+                user: None,
+                token,
+                deployment_token: Some(deployment_token),
+            }),
+            _ => Err(response::unauthorized()),
+        }
+    }
+}
+
+/// RustDesk PC client auth: `Authorization: Bearer <access_token>`.
+pub struct RustClientUser {
+    pub user: user::Model,
+    pub token: String,
+}
+
+#[async_trait]
+impl FromRequestParts<AppState> for RustClientUser {
+    type Rejection = Response;
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let auth = header(parts, "Authorization").ok_or_else(response::unauthorized)?;
+        if auth.len() <= 7 {
+            return Err(response::unauthorized());
+        }
+        let token = auth[7..].to_string();
+        match crate::services::user::info_by_access_token(&state.db, &token).await {
+            Ok(Some((user, _ut))) => {
+                if user.must_change_password
+                    && !matches!(
+                        parts.uri.path(),
+                        "/api/currentUser" | "/api/user/info" | "/api/logout"
+                    )
+                {
+                    let lang = header(parts, "Accept-Language").unwrap_or_default();
+                    return Err(response::error(state.tr(&lang, "PasswordChangeRequired")));
+                }
+                Ok(RustClientUser { user, token })
+            }
+            _ => Err(response::unauthorized()),
+        }
+    }
+}
+
+/// Admin-panel auth: `api-token` header -> user_tokens lookup + token refresh.
+pub struct BackendUser {
+    pub user: user::Model,
+    pub token: String,
+    #[allow(dead_code)]
+    pub user_token: user_token::Model,
+}
+
+#[async_trait]
+impl FromRequestParts<AppState> for BackendUser {
+    type Rejection = Response;
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let lang = header(parts, "Accept-Language").unwrap_or_default();
+        let token = header(parts, "api-token")
+            .filter(|t| !t.is_empty())
+            .ok_or_else(|| {
+                response::fail(response::CODE_NEED_LOGIN, state.tr(&lang, "NeedLogin"))
+            })?;
+        let (user, ut) = match crate::services::user::info_by_access_token(&state.db, &token).await
+        {
+            Ok(Some(pair)) => pair,
+            _ => {
+                return Err(response::fail(
+                    response::CODE_NEED_LOGIN,
+                    state.tr(&lang, "NeedLogin"),
+                ))
+            }
+        };
+        if !user.is_enabled() {
+            return Err(response::unauthorized());
+        }
+        if user.must_change_password && !password_change_allowed_path(parts.uri.path()) {
+            return Err(response::fail(
+                112,
+                state.tr(&lang, "PasswordChangeRequired"),
+            ));
+        }
+        // auto-refresh token if close to expiry
+        let _ =
+            crate::services::user::auto_refresh_access_token(&state.db, &state.config, &ut).await;
+        Ok(BackendUser {
+            user,
+            token,
+            user_token: ut,
+        })
+    }
+}
+
+fn password_change_allowed_path(path: &str) -> bool {
+    matches!(
+        path,
+        "/api/admin/user/current" | "/api/admin/user/changeCurPwd" | "/api/admin/logout"
+    )
+}
+
+/// Admin-only: a [`BackendUser`] that is also an admin.
+pub struct AdminUser {
+    pub user: user::Model,
+    pub token: String,
+}
+
+#[async_trait]
+impl FromRequestParts<AppState> for AdminUser {
+    type Rejection = Response;
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let lang = header(parts, "Accept-Language").unwrap_or_default();
+        let backend = BackendUser::from_request_parts(parts, state).await?;
+        if !backend.user.is_admin() {
+            return Err(response::fail(
+                response::CODE_NO_ACCESS,
+                state.tr(&lang, "NoAccess"),
+            ));
+        }
+        Ok(AdminUser {
+            user: backend.user,
+            token: backend.token,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        body::{to_bytes, Body},
+        http::{Request, StatusCode},
+    };
+    use sea_orm::{ActiveModelTrait, ConnectionTrait, Database, DbBackend, Schema, Set};
+    use serde_json::Value;
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn review_bearer_extractors_enforce_required_password_changes() {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        let schema = Schema::new(DbBackend::Sqlite);
+        for statement in [
+            schema.create_table_from_entity(user::Entity),
+            schema.create_table_from_entity(user_token::Entity),
+        ] {
+            db.execute(db.get_database_backend().build(&statement))
+                .await
+                .unwrap();
+        }
+        user::ActiveModel {
+            id: Set(1),
+            username: Set("temporary".into()),
+            status: Set(user::STATUS_ENABLE),
+            must_change_password: Set(true),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+        user_token::ActiveModel {
+            user_id: Set(1),
+            token: Set("temporary-token".into()),
+            expired_at: Set(chrono::Utc::now().timestamp() + 3600),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+        let state = crate::http::api::deployment_tests::test_state(db);
+        let app = crate::http::router::build(state.clone());
+        for path in ["/api/ab", "/api/devices/cli"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(path)
+                        .header("authorization", "Bearer temporary-token")
+                        .header("content-type", "application/json")
+                        .body(Body::from("{}"))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{path}");
+            let body: Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                    .unwrap();
+            assert_eq!(
+                body["error"],
+                state.tr("", "PasswordChangeRequired"),
+                "{path}"
+            );
+        }
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/user/info")
+                    .header("authorization", "Bearer temporary-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        user::ActiveModel {
+            id: Set(1),
+            must_change_password: Set(false),
+            ..Default::default()
+        }
+        .update(&state.db)
+        .await
+        .unwrap();
+        let (mut parts, _) = Request::builder()
+            .uri("/api/ab")
+            .header("authorization", "Bearer temporary-token")
+            .body(Body::empty())
+            .unwrap()
+            .into_parts();
+        assert!(RustClientUser::from_request_parts(&mut parts, &state)
+            .await
+            .is_ok());
+        assert!(DeploymentAuth::from_request_parts(&mut parts, &state)
+            .await
+            .is_ok());
+    }
+}

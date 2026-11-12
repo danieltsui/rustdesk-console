@@ -1,0 +1,186 @@
+@import "tailwindcss";
+@import "@cloudflare/kumo/styles";
+
+/* Let Tailwind discover the utility classes baked into kumo's components. */
+@source "../node_modules/@cloudflare/kumo/dist";
+
+:root {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.admin-workspace {
+  background: color-mix(in srgb, var(--color-kumo-elevated) 65%, var(--color-kumo-base));
+  scrollbar-gutter: stable;
+}
+
+.admin-surface {
+  box-shadow: 0 1px 2px rgb(0 0 0 / 3%);
+}
+
+.admin-shell table {
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-shell thead {
+  background: var(--color-kumo-elevated);
+}
+
+.admin-shell tbody tr:hover {
+  background: var(--color-kumo-tint);
+}
+
+button[data-kumo-component="Button"]:not(:disabled) {
+  transition-property:
+    transform, background-color, border-color, color, box-shadow;
+  transition-duration: 140ms;
+  transition-timing-function: var(--ease-out);
+}
+
+button[data-kumo-component="Button"]:not(:disabled):active:not(:focus-visible) {
+  transform: scale(0.98);
+}
+
+@media (max-width: 639px) {
+  .auth-form input,
+  .auth-form button,
+  .auth-form a {
+    min-height: 44px;
+  }
+}
+
+.login-grid-bg {
+  background-image:
+    linear-gradient(to right, var(--color-kumo-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--color-kumo-line) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+@keyframes admin-page-enter {
+  from {
+    opacity: 0.82;
+    transform: translateY(4px);
+  }
+}
+
+@keyframes admin-card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@keyframes admin-backdrop-enter {
+  from {
+    opacity: 0;
+  }
+}
+
+.admin-page-enter {
+  animation: admin-page-enter 160ms var(--ease-out) both;
+}
+
+.admin-overview-metrics > * {
+  animation: admin-card-enter 220ms var(--ease-out) both;
+}
+
+.admin-overview-metrics > :nth-child(2) {
+  animation-delay: 35ms;
+}
+
+.admin-overview-metrics > :nth-child(3) {
+  animation-delay: 70ms;
+}
+
+.admin-overview-metrics > :nth-child(4) {
+  animation-delay: 105ms;
+}
+
+.admin-overview-panel {
+  animation: admin-card-enter 220ms var(--ease-out) 90ms both;
+}
+
+.admin-mobile-backdrop {
+  animation: admin-backdrop-enter 160ms var(--ease-out) both;
+}
+
+.admin-dialog-panel {
+  /* Keep Kumo’s horizontal centering without shifting the top-anchored panel upward. */
+  translate: -50% 0 !important;
+  display: flex;
+  top: 0.5rem !important;
+  width: calc(100vw - 1rem) !important;
+  min-width: 0 !important;
+  max-width: calc(100vw - 1rem) !important;
+  max-height: calc(100svh - 1rem);
+  flex-direction: column;
+  overflow: hidden;
+}
+
+@media (min-width: 640px) {
+  .admin-dialog-panel {
+    top: min(4rem, 5svh) !important;
+    max-height: min(90svh, 760px);
+  }
+
+  .admin-dialog-panel--compact {
+    width: min(24rem, calc(100vw - 2rem)) !important;
+    max-width: min(24rem, calc(100vw - 2rem)) !important;
+  }
+
+  .admin-dialog-panel--default {
+    width: min(32rem, calc(100vw - 2rem)) !important;
+    max-width: min(32rem, calc(100vw - 2rem)) !important;
+  }
+
+  .admin-dialog-panel--wide {
+    width: min(56rem, calc(100vw - 2rem)) !important;
+    max-width: min(56rem, calc(100vw - 2rem)) !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  button[data-kumo-component="Button"]:not(:disabled) {
+    transition: none;
+  }
+
+  button[data-kumo-component="Button"]:not(:disabled):active {
+    transform: none;
+  }
+
+  .admin-mobile-nav {
+    transition: none !important;
+  }
+
+  .admin-mobile-backdrop,
+  .admin-overview-metrics > *,
+  .admin-overview-panel,
+  .admin-page-enter {
+    animation: none;
+  }
+
+  [role="dialog"]:not(.admin-mobile-nav) {
+    scale: 1 !important;
+    transition-property: opacity !important;
+    transition-duration: 80ms !important;
+  }
+}

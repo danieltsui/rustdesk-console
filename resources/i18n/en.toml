@@ -1,0 +1,260 @@
+[Test]
+description = "test"
+one = "test1 "
+other = "Test2 {{.P0}}"
+
+[ParamsError]
+description = "Params validation failed."
+one = "Params validation failed."
+other = "Params validation failed."
+
+[OperationFailed]
+description = "OperationFailed."
+one = "the operation failed."
+other = "the operation failed."
+
+[OperationSuccess]
+description = "OperationSuccess."
+one = "the operation success."
+other = "the operation success."
+
+[GeoRelayOutsidePool]
+description = "A Geo relay rule references a relay outside the configured relay pool."
+one = "Rule “{{.P0}}” references relay “{{.P1}}”, which is not in the server relay pool."
+other = "Rule “{{.P0}}” references relay “{{.P1}}”, which is not in the server relay pool."
+
+[ItemExists]
+description = "Item already exists."
+one = "Item already exists."
+other = "Item already exists."
+
+[ItemNotFound]
+description = "Item not found."
+one = "Item not found."
+other = "Item not found."
+
+[NoAccess]
+description = "No access."
+one = "No access."
+other = "No access."
+
+[NeedLogin]
+description = "Need login."
+one = "Please log in first."
+other = "Please log in first."
+
+[PasswordChangeRequired]
+description = "Password change required."
+one = "Please change your password before continuing."
+other = "Please change your password before continuing."
+
+[PasswordMismatch]
+description = "Password confirmation mismatch."
+one = "Passwords do not match."
+other = "Passwords do not match."
+
+[SetupAlreadyInitialized]
+description = "Initial setup has already been completed."
+one = "Initial setup has already been completed."
+other = "Initial setup has already been completed."
+
+[UsernameOrPasswordError]
+description = "Username or password error."
+one = "Username or password error."
+other = "Username or password error."
+
+[SystemError]
+description = "System error."
+one = "System error."
+other = "System error."
+
+[ConfigNotFound]
+description = "Config not found."
+one = "Config not found."
+other = "Config not found."
+
+[OauthExpired]
+description = "Oauth expired."
+one = "Oauth expired, please try again."
+other = "Oauth expired,please try again."
+
+[OauthFailed]
+description = "Oauth failed."
+one = "Oauth failed."
+other = "Oauth failed."
+
+[OauthHasBindOtherUser]
+description = "Oauth has bind other user."
+one = "Oauth has bind other user."
+other = "Oauth has bind other user."
+
+[ParamIsEmpty]
+description = "Param is empty."
+one = "{{.P0}} is empty."
+other = "{{.P0}} is empty."
+
+[BindFail]
+description = "Bind fail."
+one = "Bind fail."
+other = "Bind fail."
+[BindSuccess]
+description = "Bind success."
+one = "Bind success."
+other = "Bind success."
+[OauthHasBeenSuccess]
+description = "Oauth has been success."
+one = "Oauth has been success."
+other = "Oauth has been success."
+[OauthSuccess]
+description = "Oauth success."
+one = "Oauth success."
+other = "Oauth success."
+[OauthRegisterSuccess]
+description = "Oauth register success."
+one = "Oauth register success."
+other = "Oauth register success."
+[OauthRegisterFailed]
+description = "Oauth register failed."
+one = "Oauth register failed."
+other = "Oauth register failed."
+[GetOauthTokenError]
+description = "Get oauth token error."
+one = "Get oauth token error."
+other = "Get oauth token error."
+[GetOauthUserInfoError]
+description = "Get oauth user info error."
+one = "Get oauth user info error."
+other = "Get oauth user info error."
+[DecodeOauthUserInfoError]
+description = "Decode oauth user info error."
+one = "Decode oauth user info error."
+other = "Decode oauth user info error."
+
+[ProviderNotReady]
+description = "OAuth provider is not ready."
+one = "OAuth provider is not ready. Check client ID, client secret, issuer, and provider type."
+other = "OAuth provider is not ready. Check client ID, client secret, issuer, and provider type."
+
+[OAuthProviderEndpointMissing]
+description = "OAuth provider endpoint missing."
+one = "OAuth provider discovery is missing authorization, token, or userinfo endpoint."
+other = "OAuth provider discovery is missing authorization, token, or userinfo endpoint."
+
+[OAuthProviderJwksMissing]
+description = "OAuth provider JWKS missing."
+one = "OAuth provider discovery is missing JWKS URI."
+other = "OAuth provider discovery is missing JWKS URI."
+
+[OidcDiscoveryFailed]
+description = "OIDC discovery failed."
+one = "Failed to fetch OIDC discovery document."
+other = "Failed to fetch OIDC discovery document."
+
+[OidcDiscoveryParseFailed]
+description = "OIDC discovery parse failed."
+one = "Failed to parse OIDC discovery document."
+other = "Failed to parse OIDC discovery document."
+
+[OidcIdTokenInvalid]
+description = "OIDC ID token invalid."
+one = "OIDC ID token validation failed."
+other = "OIDC ID token validation failed."
+
+[OidcNonceMissing]
+description = "OIDC nonce missing."
+one = "OIDC ID token did not include nonce."
+other = "OIDC ID token did not include nonce."
+
+[OidcNonceMismatch]
+description = "OIDC nonce mismatch."
+one = "OIDC nonce mismatch."
+other = "OIDC nonce mismatch."
+
+[OidcSubjectMissing]
+description = "OIDC subject missing."
+one = "OIDC ID token did not include subject."
+other = "OIDC ID token did not include subject."
+
+[OidcSubjectMismatch]
+description = "OIDC subject mismatch."
+one = "OIDC userinfo subject does not match ID token subject."
+other = "OIDC userinfo subject does not match ID token subject."
+
+[OidcUnsupportedAlgorithm]
+description = "OIDC unsupported algorithm."
+one = "OIDC ID token uses an unsupported signing algorithm."
+other = "OIDC ID token uses an unsupported signing algorithm."
+
+[OidcSigningKeyNotFound]
+description = "OIDC signing key not found."
+one = "OIDC signing key was not found in JWKS."
+other = "OIDC signing key was not found in JWKS."
+
+[OidcSigningKeyInvalid]
+description = "OIDC signing key invalid."
+one = "OIDC signing key is invalid."
+other = "OIDC signing key is invalid."
+
+[OidcUnsupportedKeyType]
+description = "OIDC unsupported key type."
+one = "OIDC signing key type is unsupported."
+other = "OIDC signing key type is unsupported."
+
+[OidcJwksFetchFailed]
+description = "OIDC JWKS fetch failed."
+one = "Failed to fetch OIDC JWKS."
+other = "Failed to fetch OIDC JWKS."
+
+[OidcJwksParseFailed]
+description = "OIDC JWKS parse failed."
+one = "Failed to parse OIDC JWKS."
+other = "Failed to parse OIDC JWKS."
+
+[OldPasswordError]
+description = "Old password error."
+one = "Old password error."
+other = "Old password error."
+
+[DefaultGroup]
+description = "Default group"
+one = "Default Group"
+other = "Default Group"
+
+[ShareGroup]
+description = "Share group"
+one = "Share Group"
+other = "Share Group"
+[RegisterClosed]
+description = "Register closed."
+one = "Register closed."
+other = "Register closed."
+
+[CaptchaRequired]
+description = "Captcha required."
+one = "Captcha required."
+other = "Captcha required."
+
+[CaptchaError]
+description = "Captcha error."
+one = "Captcha error."
+other = "Captcha error."
+
+[PwdLoginDisabled]
+description = "Password login disabled."
+one = "Password login disabled."
+other = "Password login disabled."
+
+[CannotShareToSelf]
+description = "Cannot share to self."
+one = "Cannot share to self."
+other = "Cannot share to self."
+
+[Banned]
+description = "Banned."
+one = "Banned."
+other = "Banned."
+
+[RegisterSuccessWaitAdminConfirm]
+description = "Register success, wait admin confirm."
+one = "Register success, wait admin confirm."
+other = "Register success, wait admin confirm."

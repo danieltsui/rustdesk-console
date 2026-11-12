@@ -1,0 +1,10 @@
+/target
+/data
+/runtime
+**/*.rs.bk
+.git
+.github
+*.md
+docs/*
+!docs/self-signed-client.en.md
+!docs/self-signed-client.zh-CN.md

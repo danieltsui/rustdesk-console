@@ -1,0 +1,104 @@
+name: build
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  # Build the admin SPA once and share it with every target build.
+  webui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.0
+      - name: Build admin web UI
+        run: |
+          cd web
+          pnpm install --frozen-lockfile
+          pnpm test
+          pnpm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: admin-dist
+          path: resources/admin
+
+  binaries:
+    needs: webui
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cross
+        run: cargo install cross --locked || true
+      - name: Pull in admin UI
+        uses: actions/download-artifact@v4
+        with:
+          name: admin-dist
+          path: resources/admin
+      - name: Build (${{ matrix.target }})
+        run: |
+          cross build --release --target ${{ matrix.target }} -p rustdesk-console
+      - name: Package
+        run: |
+          mkdir -p release
+          cp target/${{ matrix.target }}/release/rustdesk-console release/
+          cp -r conf release/
+          mkdir -p release/data release/runtime
+          tar -C release -czf rustdesk-console-${{ matrix.target }}.tar.gz .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rustdesk-console-${{ matrix.target }}
+          path: rustdesk-console-${{ matrix.target }}.tar.gz
+      - name: Upload to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: rustdesk-console-${{ matrix.target }}.tar.gz
+
+  docker:
+    needs: webui
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Log in to Docker Hub
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ startsWith(github.ref, 'refs/tags/') }}
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            docker.io/${{ secrets.DOCKERHUB_USERNAME }}/rustdesk-console:latest
+            docker.io/${{ secrets.DOCKERHUB_USERNAME }}/rustdesk-console:${{ github.ref_name }}
