@@ -6,7 +6,7 @@
 安裝目錄：`/opt/rustdesk-console/`  
 systemd 單元：`rustdesk-console.service`  
 服務帳號：`rustdesk-console`  
-管理介面：`http://192.168.8.31:21114/`
+管理介面：`http://<LAN_IP>:21114/`（`<LAN_IP>` 為主機的區域網路位址）
 
 不要覆寫這些檔案：
 
@@ -49,15 +49,15 @@ sudo install -o rustdesk-console -g rustdesk-console -m 755 \
 sudo systemctl start rustdesk-console.service
 
 systemctl is-active rustdesk-console.service
-curl -fsS -o /dev/null -w 'health %{http_code}\n' http://192.168.8.31:21114/health
+curl -fsS -o /dev/null -w 'health %{http_code}\n' http://<LAN_IP>:21114/health
 ss -lnt | awk 'NR==1 || /:21114|:80|:443/'
 ```
 
 完成後應看到：
 
 - `rustdesk-console.service` 為 `active`
-- `http://192.168.8.31:21114/health` 回傳 200
-- `21114` 仍只綁在 `192.168.8.31`
+- `http://<LAN_IP>:21114/health` 回傳 200
+- `21114` 仍只綁在 `<LAN_IP>`
 - `80` 和 `443` 仍然沒有在聽
 - hbbs、hbbr、gohttpserver 沒有被重啟
 
